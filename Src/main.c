@@ -80,6 +80,7 @@ uint16_t GetCurrentWeight()
 }
 uint16_t GetCurrentTemperature()
 {
+	#define MCP9808_ADDRESS 0x18
 	int temp_flag = 0;
 	uint8_t buffer[2];
 	  HAL_I2C_Mem_Read(&hi2c1, MCP9808_ADDRESS << 1, 0x05, 1, buffer, 2, HAL_MAX_DELAY);
