@@ -89,6 +89,7 @@ uint16_t GetCurrentWeight()
 }
 uint16_t GetCurrentTemperature()
 {
+<<<<<<< HEAD
 	//TODO: temperature measuring code here
 	int temp_flag = 0;
 	uint8_t buffer[2];
@@ -99,6 +100,18 @@ uint16_t GetCurrentTemperature()
 	  // Handle temperature data as needed
 	//	      sprintf(buffer, "Temperature: %.2f degrees Celsius\r\n", temp_celsius);
 	//printf( "Temperature: %.2f degrees Celsius\r\n", temp_celsius);
+=======
+	#define MCP9808_ADDRESS 0x18
+	int temp_flag = 0;
+	uint8_t buffer[2];
+	  HAL_I2C_Mem_Read(&hi2c1, MCP9808_ADDRESS << 1, 0x05, 1, buffer, 2, HAL_MAX_DELAY);
+	
+	  int16_t temperature = ((buffer[0] << 8) | buffer[1]) & 0xFFF;
+	  float temp_celsius = (float)temperature / 16.0;
+	  // Handle temperature data as needed
+	//	      sprintf(buffer, "Temperature: %.2f degrees Celsius\r\n", temp_celsius);
+	  printf( "Temperature: %.2f degrees Celsius\r\n", temp_celsius);
+>>>>>>> 82e135bbbcd06594c2297078f78e6f1ab7b5124d
 	return temp_celsius;
 }
 void SetCurrentTemperature(uint8_t newTemperature)
