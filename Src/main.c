@@ -33,6 +33,7 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 #define Dimmer_1 0
+#define MCP9808_ADDRESS 0x18
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -41,6 +42,8 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+I2C_HandleTypeDef hi2c1;
+
 TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim2;
 
@@ -53,6 +56,7 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_TIM2_Init(void);
 static void MX_TIM1_Init(void);
+static void MX_I2C1_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -66,19 +70,22 @@ typedef enum state_t {
  CoolingDown
 } state_t;
 
-uint16_t petInsideWeightThreshold = 1488; //kilograms
-uint16_t temperatureLowBound = 14; //celsius
-uint16_t temperatureUpperBound = 88; //celsius
+volatile uint16_t petInsideWeightThreshold = 1488; //kilograms
+volatile uint16_t temperatureLowBound = 14; //celsius
+volatile uint16_t temperatureUpperBound = 88; //celsius
 
-uint16_t setTemperature = 0; //celsius
-uint16_t secondsElapsed = 0;
-uint16_t temperatureCheckInterval = 0; //seconds
-uint16_t maxVoltageValue = 256; //0 to 256
-uint16_t maxRugTemperature = 40; //celsius
+volatile uint16_t setTemperature = 0; //celsius
+volatile uint16_t temperatureStep = 5;
+volatile uint16_t secondsElapsed = 0;
+volatile uint16_t temperatureCheckInterval = 0; //seconds
+volatile uint16_t maxVoltageValue = 256; //0 to 256
+volatile uint16_t maxRugTemperature = 40; //celsius
 
+void TransitState(state_t newState);
 uint16_t GetCurrentWeight()
 {
 	//TODO: weight measuring code here
+	return 1500;
 }
 uint16_t GetCurrentTemperature()
 {
@@ -154,6 +161,8 @@ void CoolingDownRoutine()
 	}
 }
 
+volatile state_t budkaState;
+
 void (*stateFunction)(void) = WeightCheckingRoutine;
 
 void TransitState(state_t newState)
@@ -163,28 +172,27 @@ void TransitState(state_t newState)
 		case CheckingWeight:
 			SwitchTemperatureRelay(0);
 			budkaState = CheckingWeight;
-			stateFunction = WeightCheckingRoutine();
+			stateFunction = WeightCheckingRoutine;
 			break;
 		case CheckingTemperature:
 			SwitchTemperatureRelay(1);
 			budkaState = CheckingTemperature;
-			stateFunction = TemperatureCheckingRoutine();
+			stateFunction = TemperatureCheckingRoutine;
 			break;
 		case WarmingUp:
 			secondsElapsed = 0;
 			budkaState = WarmingUp;
-			stateFunction = WarmingUpRoutine();
+			stateFunction = WarmingUpRoutine;
 			break;
 		case CoolingDown:
 			secondsElapsed = 0;
 			budkaState = CoolingDown;
-			stateFunction = CoolingDownRoutine();
+			stateFunction = CoolingDownRoutine;
 			break;
 	}
 }
 
 
-volatile stack_t budkaState;
 /* USER CODE END 0 */
 
 /**
@@ -197,8 +205,6 @@ int main(void)
 	Dimmer_init_begin();
 	Dimmer_pin_assign(Dimmer_1, GPIO_PIN_1);
 	Dimmer_init_end();
-
-	HAL_TIM_Base_Start_IT(&htim2);
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
@@ -221,8 +227,11 @@ int main(void)
   MX_GPIO_Init();
   MX_TIM2_Init();
   MX_TIM1_Init();
+  MX_I2C1_Init();
   /* USER CODE BEGIN 2 */
 
+	HAL_TIM_Base_Start_IT(&htim2);
+	HAL_TIM_Base_Start_IT(&htim1);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -254,12 +263,11 @@ void SystemClock_Config(void)
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
-  RCC_OscInitStruct.HSIState = RCC_HSI_ON;
-  RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
+  RCC_OscInitStruct.HSEState = RCC_HSE_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
-  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
-  RCC_OscInitStruct.PLL.PLLM = 8;
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
+  RCC_OscInitStruct.PLL.PLLM = 4;
   RCC_OscInitStruct.PLL.PLLN = 192;
   RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV4;
   RCC_OscInitStruct.PLL.PLLQ = 8;
@@ -281,6 +289,40 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
+}
+
+/**
+  * @brief I2C1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_I2C1_Init(void)
+{
+
+  /* USER CODE BEGIN I2C1_Init 0 */
+
+  /* USER CODE END I2C1_Init 0 */
+
+  /* USER CODE BEGIN I2C1_Init 1 */
+
+  /* USER CODE END I2C1_Init 1 */
+  hi2c1.Instance = I2C1;
+  hi2c1.Init.ClockSpeed = 100000;
+  hi2c1.Init.DutyCycle = I2C_DUTYCYCLE_2;
+  hi2c1.Init.OwnAddress1 = 0;
+  hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
+  hi2c1.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
+  hi2c1.Init.OwnAddress2 = 0;
+  hi2c1.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
+  hi2c1.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
+  if (HAL_I2C_Init(&hi2c1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN I2C1_Init 2 */
+
+  /* USER CODE END I2C1_Init 2 */
+
 }
 
 /**
@@ -400,6 +442,9 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(OTG_FS_PowerSwitchOn_GPIO_Port, OTG_FS_PowerSwitchOn_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(Dimmer_Signal_GPIO_Port, Dimmer_Signal_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOD, LD4_Pin|LD3_Pin|LD5_Pin|LD6_Pin
                           |Audio_RST_Pin, GPIO_PIN_RESET);
 
@@ -437,11 +482,18 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Alternate = GPIO_AF5_SPI2;
   HAL_GPIO_Init(PDM_OUT_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : PA0 */
-  GPIO_InitStruct.Pin = GPIO_PIN_0;
-  GPIO_InitStruct.Mode = GPIO_MODE_EVT_RISING;
+  /*Configure GPIO pin : Dimmer_Interrupt_Pin */
+  GPIO_InitStruct.Pin = Dimmer_Interrupt_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING_FALLING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+  HAL_GPIO_Init(Dimmer_Interrupt_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : Dimmer_Signal_Pin */
+  GPIO_InitStruct.Pin = Dimmer_Signal_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_PULLDOWN;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_MEDIUM;
+  HAL_GPIO_Init(Dimmer_Signal_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pin : I2S3_WS_Pin */
   GPIO_InitStruct.Pin = I2S3_WS_Pin;
@@ -504,13 +556,9 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(OTG_FS_OverCurrent_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : Audio_SCL_Pin Audio_SDA_Pin */
-  GPIO_InitStruct.Pin = Audio_SCL_Pin|Audio_SDA_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_OD;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  GPIO_InitStruct.Alternate = GPIO_AF4_I2C1;
-  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+  /* EXTI interrupt init*/
+  HAL_NVIC_SetPriority(EXTI0_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(EXTI0_IRQn);
 
 /* USER CODE BEGIN MX_GPIO_Init_2 */
 /* USER CODE END MX_GPIO_Init_2 */
@@ -543,6 +591,16 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 				TransitState(CheckingTemperature);
 			}
 		}
+	}else if(htim->Instance == TIM1)
+	{
+		HandleTimerInterrupt();
+	}
+}
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+	if(GPIO_Pin == GPIO_PIN_0)
+	{
+		HandleDimmerInterrupt();
 	}
 }
 /* USER CODE END 4 */
