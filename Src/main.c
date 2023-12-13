@@ -23,6 +23,7 @@
 /* USER CODE BEGIN Includes */
 #include <stdbool.h>
 #include "AC_Dimmer.h"
+#include "lcd5110.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -82,10 +83,95 @@ volatile uint16_t maxVoltageValue = 256; //0 to 256
 volatile uint16_t maxRugTemperature = 40; //celsius
 
 void TransitState(state_t newState);
+void LCD_init()
+{
+	LCD5110_display lcd1;
+	lcd1.hw_conf.spi_handle = &hspi4;
+	lcd1.hw_conf.spi_cs_pin =  CE_Pin;
+	lcd1.hw_conf.spi_cs_port = CE_GPIO_Port;
+	lcd1.hw_conf.rst_pin =  RST_Pin;
+	lcd1.hw_conf.rst_port = RST_GPIO_Port;
+	lcd1.hw_conf.dc_pin =  DC_Pin;
+	lcd1.hw_conf.dc_port = DC_GPIO_Port;
+	lcd1.def_scr = lcd5110_def_scr;
+	LCD5110_init(&lcd1.hw_conf, LCD5110_NORMAL_MODE, 0x40, 2, 3);
+
+        HAL_TIM_Base_Start(&htim10);
+}
+void WEIGHT_init()
+{
+	static uint8_t GAIN;
+
+	void delay_us (uint16_t us) {
+		__HAL_TIM_SET_COUNTER(&htim10, 0);
+		while(__HAL_TIM_GET_COUNTER(&htim10) < us);
+	}
+
+	void hx711_powerUp(void) {
+		HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_RESET);
+	}
+	void hx711_setGain(uint8_t gain) {
+		if(gain < 64) GAIN = 2;
+		else if(gain < 128) GAIN = 3;
+		else GAIN = 1;
+	}
+	void hx711_init(void) {
+		hx711_setGain(128);
+		hx711_powerUp();
+	}
+	int32_t hx711_get_value(void) {
+		uint32_t data = 0;
+		uint8_t dout;
+		int32_t filler;
+		int32_t ret_value;
+		for (uint8_t i = 0; i < 24; i++) {
+			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET);
+			delay_us(1);
+			dout = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_3);
+			data = data << 1;
+			if (dout) {
+				data++;
+			}
+			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_RESET);
+			delay_us(1);
+		}
+		for( int i = 0; i < GAIN; i ++ ) {
+			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET);
+			delay_us(1);
+			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_RESET);
+			delay_us(1);
+		}
+		if( data & 0x800000 )
+			filler = 0xFF000000;
+		else
+			filler = 0x00000000;
+
+		ret_value = filler + data;
+		return ret_value;
+	}
+	uint8_t hx711_is_ready(void) {
+		return HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_3) == GPIO_PIN_RESET;
+	}
+}
 uint16_t GetCurrentWeight()
 {
-	//TODO: weight measuring code here
-	return 1500;
+	int32_t hx711_value;
+	if(hx711_is_ready()) {
+	      LCD5110_clear_scr(&lcd1);
+	      hx711_value = hx711_get_value();
+	      LCD5110_print("Weight: \n", BLACK, &lcd1);
+	      char buffer[100];
+	      sprintf(buffer, "%lu \n", ((hx711_value)/1000)+263);
+	      LCD5110_print(buffer, BLACK, &lcd1);
+	      HAL_Delay(500);
+	      LCD5110_clear_scr(&lcd1);
+	}else {
+	      LCD5110_clear_scr(&lcd1);
+	      LCD5110_print("Error! \n", BLACK, &lcd1);
+	      HAL_Delay(500);
+	      LCD5110_clear_scr(&lcd1);
+	}
+	return ((hx711_value)/1000)+263;
 }
 uint16_t GetCurrentTemperature()
 {
@@ -98,8 +184,9 @@ uint16_t GetCurrentTemperature()
 	int16_t temperature = ((buffer[0] << 8) | buffer[1]) & 0xFFF;
 	float temp_celsius = (float)temperature / 16.0;
 	  // Handle temperature data as needed
-	//	      sprintf(buffer, "Temperature: %.2f degrees Celsius\r\n", temp_celsius);
+	sprintf(buffer, "Temperature: %.2f degrees Celsius\r\n", temp_celsius);
 	//printf( "Temperature: %.2f degrees Celsius\r\n", temp_celsius);
+<<<<<<< HEAD
 =======
 	#define MCP9808_ADDRESS 0x18
 	int temp_flag = 0;
@@ -112,6 +199,9 @@ uint16_t GetCurrentTemperature()
 	//	      sprintf(buffer, "Temperature: %.2f degrees Celsius\r\n", temp_celsius);
 	  printf( "Temperature: %.2f degrees Celsius\r\n", temp_celsius);
 >>>>>>> 82e135bbbcd06594c2297078f78e6f1ab7b5124d
+=======
+	LCD5110_print(buffer, BLACK, &lcd1);
+>>>>>>> b600e655d4f01ca176fcf2d0895db0b2b7f4c5f4
 	return temp_celsius;
 }
 void SetCurrentTemperature(uint8_t newTemperature)
@@ -249,9 +339,12 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+  LCD_init();
+  WEIGHT_init();
   while (1)
   {
 	  stateFunction();
+	  
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
