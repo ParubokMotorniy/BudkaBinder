@@ -76,6 +76,8 @@ void Error_Handler(void);
 #define Dimmer_Interrupt_EXTI_IRQn EXTI0_IRQn
 #define Dimmer_Signal_Pin GPIO_PIN_1
 #define Dimmer_Signal_GPIO_Port GPIOA
+#define Relay_Trigger_Pin GPIO_PIN_2
+#define Relay_Trigger_GPIO_Port GPIOA
 #define I2S3_WS_Pin GPIO_PIN_4
 #define I2S3_WS_GPIO_Port GPIOA
 #define SPI1_SCK_Pin GPIO_PIN_5
@@ -86,6 +88,12 @@ void Error_Handler(void);
 #define SPI1_MOSI_GPIO_Port GPIOA
 #define CLK_IN_Pin GPIO_PIN_10
 #define CLK_IN_GPIO_Port GPIOB
+#define DC_Pin GPIO_PIN_13
+#define DC_GPIO_Port GPIOB
+#define CE_Pin GPIO_PIN_14
+#define CE_GPIO_Port GPIOB
+#define RST_Pin GPIO_PIN_15
+#define RST_GPIO_Port GPIOB
 #define LD4_Pin GPIO_PIN_12
 #define LD4_GPIO_Port GPIOD
 #define LD3_Pin GPIO_PIN_13
