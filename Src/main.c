@@ -18,9 +18,11 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "dma.h"
 #include "i2c.h"
 #include "spi.h"
 #include "tim.h"
+#include "usart.h"
 #include "gpio.h"
 
 /* Private includes ----------------------------------------------------------*/
@@ -41,6 +43,12 @@
 /* USER CODE BEGIN PD */
 #define Dimmer_1 0
 #define MCP9808_ADDRESS 0x18
+
+#define successMessageSize 10
+#define errorMessageSize 8
+#define maxMessageSize 11
+#define uResponseLineSize 8
+#define sResponseLineSize 9
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -69,16 +77,33 @@ typedef enum state_t {
  CoolingDown
 } state_t;
 
-volatile uint16_t petInsideWeightThreshold = 1200; //kilograms
-volatile uint16_t temperatureLowBound = 14; //celsius
-volatile uint16_t temperatureUpperBound = 20; //celsius
+const uint8_t absolutePetInsideWeightThresholdLow = 2; //can not be set lower than this
+const uint8_t absolutePetInsideWeightThresholdUpper = 40; //defined by characteristics of tenso sensors
+const int8_t absoluteTemperatureLowBound = -15; //can not be set lower than this
+const int8_t absoluteTemperatureUpperBound = 45; //can not be set lower than this
 
-volatile uint16_t setTemperature = 0; //celsius
+volatile uint8_t petInsideWeightThreshold = 12; //kilograms
+volatile int8_t temperatureLowBound = 14; //celsius
+volatile int8_t temperatureUpperBound = 20; //celsius
+
+volatile int8_t setTemperature = 0; //celsius
 volatile uint16_t temperatureStep = 5;
 volatile uint16_t secondsElapsed = 0;
 volatile uint16_t temperatureCheckInterval = 0; //seconds
 volatile uint16_t maxVoltageValue = 256; //0 to 256
 volatile uint16_t maxRugTemperature = 40; //celsius
+
+uint8_t stateMessage[errorMessageSize] = {85, 80, 71, 79, 73, 78, 10, 13};
+uint8_t successMessage[successMessageSize] = "SUCCESS!\r\n";
+uint8_t errorMessage[errorMessageSize] = "ERROR!\r\n";
+uint8_t receive_buff[maxMessageSize];
+
+uint8_t lowerBoundMessage[sResponseLineSize] = {76, 87, 82, 61, 0, 0, 0, 10, 13};
+uint8_t upperBoundMessage[uResponseLineSize] = {85, 80, 82, 61, 0, 0, 10, 13};
+uint8_t setTempMessage[uResponseLineSize] = {84, 77, 80, 61, 0, 0, 10, 13};
+uint8_t weightBoundMessage[uResponseLineSize] = {87, 71, 84, 61, 0, 0, 10, 13};
+uint8_t presenceMessage[uResponseLineSize] = {80, 82, 83, 61, 48, 0, 10, 13};
+uint8_t curTempMessage[sResponseLineSize] = {67, 85, 82, 61, 0, 0, 10, 13};
 
 uint8_t ledArrLength = 4;
 uint16_t leds[4] = {GPIO_PIN_12, GPIO_PIN_13, GPIO_PIN_14, GPIO_PIN_15};
@@ -211,13 +236,38 @@ uint16_t GetCurrentTemperature()
 	return temp_celsius;
 }
 
-void SetCurrentTemperature(uint8_t newTemperature)
+bool SetCurrentTemperature(uint8_t newTemperature)
 {
-	if(newTemperature > 40 && newTemperature < 0){return;}
+	if(newTemperature > temperatureUpperBound || newTemperature < temperatureLowBound){return false;}
 	setTemperature = newTemperature;
 
 	Dimm_value(Dimmer_1, (setTemperature * maxVoltageValue) / maxRugTemperature);
+	return true;
 
+}
+
+bool SetTemperatureLowerBound(uint8_t newBound)
+{
+	if(newBound < absoluteTemperatureLowBound || newBound >= temperatureUpperBound){return false;}
+
+	temperatureLowBound = newBound;
+	return true;
+}
+
+bool SetTemperatureUpperBound(uint8_t newBound)
+{
+	if(newBound > absoluteTemperatureUpperBound || newBound <= temperatureLowBound){return false;}
+
+	temperatureUpperBound = newBound;
+	return true;
+}
+
+bool SetWeightThreshold(uint8_t newThreshold)
+{
+	if(newThreshold > absolutePetInsideWeightThresholdUpper || newThreshold < absolutePetInsideWeightThresholdLow){return false;}
+
+	petInsideWeightThreshold = newThreshold;
+	return 1;
 }
 
 void WeightCheckingRoutine()
@@ -349,19 +399,21 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_DMA_Init();
   MX_TIM2_Init();
   MX_TIM1_Init();
   MX_I2C1_Init();
   MX_TIM10_Init();
   MX_SPI1_Init();
+  MX_USART6_UART_Init();
   /* USER CODE BEGIN 2 */
   	LCD_init();
 	HAL_TIM_Base_Start_IT(&htim2);
 	HAL_TIM_Base_Start_IT(&htim1);
     HAL_TIM_Base_Start(&htim10);
-
+    HAL_UART_Receive_IT(&huart6, receive_buff, maxMessageSize);
+    //HAL_UART_Receive_DMA(&huart6, receive_buff, maxMessageSize);
     srand(184);
-	//LCD5110_print("Hello, Hitler", BLACK, &lcd1);
 	LCD5110_refresh(&lcd1);
   /* USER CODE END 2 */
 
@@ -428,8 +480,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
 	if(htim->Instance == TIM2)
 	{
-//		LCD5110_clear_scr(&lcd1);
-//		LCD5110_refresh(&lcd1);
+		 HAL_UART_Transmit_DMA(&huart6, stateMessage, errorMessageSize);
 		secondsElapsed++;
 		if(secondsElapsed < temperatureCheckInterval){return;}
 
@@ -463,6 +514,101 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 	{
 		HandleDimmerInterrupt();
 	}
+}
+
+/**
+  * @brief  Returns -127 if interpretation results in failure
+  */
+int8_t InterpretNumberFromBuffer()
+{
+	int8_t multiplier = 1;
+	int8_t result = 0;
+
+	if(receive_buff[8] == '-')
+	{
+		multiplier = -1;
+	} else if(receive_buff[8] != '+')
+	{
+		return -127;
+	}
+
+	if(receive_buff[9] > '9' || receive_buff[10] > '9' || receive_buff[9] < '0' || receive_buff[10] < '0' ){return -127;}
+
+	result += (receive_buff[9]-'0') * 10;
+	result += receive_buff[10] - '0';
+	result *= multiplier;
+
+	return result;
+}
+
+bool ProcessUserQuery()
+{
+	if(receive_buff[0] == 'G' && receive_buff[1] == 'E' && receive_buff[2] == 'T')
+	{
+		lowerBoundMessage[sResponseLineSize - 3] = abs(temperatureLowBound)%10 + '0';
+		lowerBoundMessage[sResponseLineSize - 4] = abs(temperatureLowBound)/10 + '0';
+		lowerBoundMessage[sResponseLineSize - 5] = temperatureLowBound > 0? '+' : '-';
+		HAL_UART_Transmit(&huart6, lowerBoundMessage, sResponseLineSize, 10);
+
+		upperBoundMessage[uResponseLineSize - 3] = temperatureUpperBound%10 + '0';
+		upperBoundMessage[uResponseLineSize - 4] = temperatureUpperBound/10 + '0';
+		HAL_UART_Transmit(&huart6, upperBoundMessage, uResponseLineSize, 10);
+
+		setTempMessage[uResponseLineSize - 3] = setTemperature%10 + '0';
+		setTempMessage[uResponseLineSize - 4] = setTemperature/10 + '0';
+		HAL_UART_Transmit(&huart6, setTempMessage, uResponseLineSize, 10);
+
+//		uint16_t curTemp = GetCurrentTemperature();
+//		curTempMessage[sResponseLineSize - 3] = abs(curTemp)%10 + '0';
+//		curTempMessage[sResponseLineSize - 4] = abs(curTemp)/10 + '0';
+//		curTempMessage[sResponseLineSize - 5] = curTemp > 0? '+' : '-';
+//		HAL_UART_Transmit_DMA(&huart6, curTempMessage, sResponseLineSize);
+
+		weightBoundMessage[uResponseLineSize - 3] = petInsideWeightThreshold%10 + '0';
+		weightBoundMessage[uResponseLineSize - 4] = petInsideWeightThreshold/10 + '0';
+		HAL_UART_Transmit(&huart6, weightBoundMessage, uResponseLineSize, 10);
+
+		presenceMessage[uResponseLineSize - 3] = !PetLeft() + '0';
+		HAL_UART_Transmit(&huart6, presenceMessage, uResponseLineSize, 10);
+
+		return true;
+	} else if(receive_buff[0] == 'S' && receive_buff[1] == 'E' && receive_buff[2] == 'T' && receive_buff[3] == '+' && receive_buff[7] == '=')
+	{
+		int8_t valueToSet =  InterpretNumberFromBuffer();
+		if(valueToSet == -127)
+		{
+			return false;
+		}
+
+		if(receive_buff[4] == 'L' && receive_buff[5] == 'W' && receive_buff[6] == 'R')
+		{
+			return SetTemperatureLowerBound(valueToSet);
+		} else if(receive_buff[4] == 'U' && receive_buff[5] == 'P' && receive_buff[6] == 'R')
+		{
+			return SetTemperatureUpperBound(valueToSet);
+		}else if(receive_buff[4] == 'W' && receive_buff[5] == 'G' && receive_buff[6] == 'T')
+		{
+			return SetWeightThreshold(valueToSet);
+		} else if(receive_buff[4] == 'T' && receive_buff[5] == 'M' && receive_buff[6] == 'P')
+		{
+			return SetCurrentTemperature(valueToSet);
+		}
+	}
+	return false;
+}
+
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+
+	if(ProcessUserQuery())
+	{
+		HAL_UART_Transmit_DMA(&huart6, successMessage, successMessageSize);
+	} else
+	{
+		HAL_UART_Transmit_DMA(&huart6, errorMessage, errorMessageSize);
+	}
+  HAL_UART_Receive_IT(&huart6, receive_buff, maxMessageSize);
+  //HAL_UART_Receive_IT(&huart1, receive_buff, 1);
 }
 /* USER CODE END 4 */
 
