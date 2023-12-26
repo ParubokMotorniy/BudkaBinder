@@ -142,7 +142,6 @@ void tim_form() //Done
 	}
 }
 
-
 void Dimm_value(unsigned char dim_num, unsigned char power) //Done
 {
 	dim_val_func_running = 1;

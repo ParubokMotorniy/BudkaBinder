@@ -101,6 +101,7 @@ uint8_t receive_buff[maxMessageSize];
 uint8_t lowerBoundMessage[sResponseLineSize] = {76, 87, 82, 61, 0, 0, 0, 10, 13};
 uint8_t upperBoundMessage[uResponseLineSize] = {85, 80, 82, 61, 0, 0, 10, 13};
 uint8_t setTempMessage[uResponseLineSize] = {84, 77, 80, 61, 0, 0, 10, 13};
+uint8_t loadMessage[uResponseLineSize] = {76, 79, 68, 61, 0, 0, 10, 13};
 uint8_t weightBoundMessage[uResponseLineSize] = {87, 71, 84, 61, 0, 0, 10, 13};
 uint8_t presenceMessage[uResponseLineSize] = {80, 82, 83, 61, 48, 0, 10, 13};
 uint8_t curTempMessage[sResponseLineSize] = {67, 85, 82, 61, 0, 0, 10, 13};
@@ -563,6 +564,11 @@ bool ProcessUserQuery()
 //		curTempMessage[sResponseLineSize - 4] = abs(curTemp)/10 + '0';
 //		curTempMessage[sResponseLineSize - 5] = curTemp > 0? '+' : '-';
 //		HAL_UART_Transmit_DMA(&huart6, curTempMessage, sResponseLineSize);
+
+//		uint16_t curLoad = GetCurrentWeight();
+//		loadMessage[sResponseLineSize - 3] = abs(curLoad)%10 + '0';
+//		loadMessage[sResponseLineSize - 4] = abs(curLoad)/10 + '0';
+//		HAL_UART_Transmit_DMA(&huart6, loadMessage, uResponseLineSize);
 
 		weightBoundMessage[uResponseLineSize - 3] = petInsideWeightThreshold%10 + '0';
 		weightBoundMessage[uResponseLineSize - 4] = petInsideWeightThreshold/10 + '0';
