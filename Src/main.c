@@ -93,6 +93,10 @@ volatile uint16_t temperatureCheckInterval = 0; //seconds
 volatile uint16_t maxVoltageValue = 256; //0 to 256
 volatile uint16_t maxRugTemperature = 40; //celsius
 
+float roughPlankWeight = 630;
+float weightConversionCoefficient = 1;
+float supportCoefficient = 2;
+
 uint8_t stateMessage[errorMessageSize] = {85, 80, 71, 79, 73, 78, 10, 13};
 uint8_t successMessage[successMessageSize] = "SUCCESS!\r\n";
 uint8_t errorMessage[errorMessageSize] = "ERROR!\r\n";
@@ -104,12 +108,10 @@ uint8_t setTempMessage[uResponseLineSize] = {84, 77, 80, 61, 0, 0, 10, 13};
 uint8_t loadMessage[uResponseLineSize] = {76, 79, 68, 61, 0, 0, 10, 13};
 uint8_t weightBoundMessage[uResponseLineSize] = {87, 71, 84, 61, 0, 0, 10, 13};
 uint8_t presenceMessage[uResponseLineSize] = {80, 82, 83, 61, 48, 0, 10, 13};
-uint8_t curTempMessage[sResponseLineSize] = {67, 85, 82, 61, 0, 0, 10, 13};
+uint8_t curTempMessage[sResponseLineSize] = {67, 85, 82, 61, 0, 0, 0, 10, 13};
 
 uint8_t ledArrLength = 4;
 uint16_t leds[4] = {GPIO_PIN_12, GPIO_PIN_13, GPIO_PIN_14, GPIO_PIN_15};
-
-LCD5110_display lcd1;
 
 void TransitState(state_t newState);
 
@@ -127,25 +129,13 @@ void SwitchStateLEDs(uint16_t ledToEnable)
 	}
 }
 
-void LCD_init()
-{
-	lcd1.hw_conf.spi_handle = &hspi1;
-	lcd1.hw_conf.spi_cs_pin =  CE_Pin;
-	lcd1.hw_conf.spi_cs_port = CE_GPIO_Port;
-	lcd1.hw_conf.rst_pin =  RST_Pin;
-	lcd1.hw_conf.rst_port = RST_GPIO_Port;
-	lcd1.hw_conf.dc_pin =  DC_Pin;
-	lcd1.hw_conf.dc_port = DC_GPIO_Port;
-	lcd1.def_scr = lcd5110_def_scr;
-	LCD5110_init(&lcd1.hw_conf, LCD5110_NORMAL_MODE, 0x40, 2, 3);
-}
 static uint8_t GAIN;
 void delay_us (uint16_t us) {
 	__HAL_TIM_SET_COUNTER(&htim10, 0);
 	while(__HAL_TIM_GET_COUNTER(&htim10) < us);
 }
 void hx711_powerUp(void) {
-	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_RESET);
+	HAL_GPIO_WritePin(GPIOD, GPIO_PIN_10, 0);
 }
 void hx711_setGain(uint8_t gain) {
 	if(gain < 64) GAIN = 2;
@@ -156,30 +146,26 @@ void hx711_init(void) {
 	hx711_setGain(128);
 	hx711_powerUp();
 }
-void WEIGHT_init()
-{
-
-}
 int32_t hx711_get_value(void) {
 		uint32_t data = 0;
 		uint8_t dout;
 		int32_t filler;
 		int32_t ret_value;
 		for (uint8_t i = 0; i < 24; i++) {
-			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET);
+			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_10, GPIO_PIN_SET);
 			delay_us(1);
-			dout = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_3);
+			dout = HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_9);
 			data = data << 1;
 			if (dout) {
 				data++;
 			}
-			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_RESET);
+			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_10, GPIO_PIN_RESET);
 			delay_us(1);
 		}
 		for( int i = 0; i < GAIN; i ++ ) {
-			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET);
+			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_10, GPIO_PIN_SET);
 			delay_us(1);
-			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_RESET);
+			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_10, GPIO_PIN_RESET);
 			delay_us(1);
 		}
 		if( data & 0x800000 )
@@ -191,50 +177,90 @@ int32_t hx711_get_value(void) {
 		return ret_value;
 	}
 uint8_t hx711_is_ready(void) {
-	return HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_3) == GPIO_PIN_RESET;
+	return HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_9) == GPIO_PIN_RESET;
 }
-uint16_t GetCurrentWeight()
+//////////////////////////////////////////////////////////////////////
+static uint8_t GAIN1;
+void delay_us1(uint16_t us) {
+	__HAL_TIM_SET_COUNTER(&htim11, 0);
+	while(__HAL_TIM_GET_COUNTER(&htim11) < us);
+}
+void hx711_powerUp1(void) {
+	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, 0);
+}
+void hx711_setGain1(uint8_t gain) {
+	if(gain < 64) GAIN1 = 2;
+	else if(gain < 128) GAIN1 = 3;
+	else GAIN1 = 1;
+}
+void hx711_init1(void) {
+	hx711_setGain1(128);
+	hx711_powerUp1();
+}
+int32_t hx711_get_value1(void) {
+		uint32_t data = 0;
+		uint8_t dout;
+		int32_t filler;
+		int32_t ret_value;
+		for (uint8_t i = 0; i < 24; i++) {
+			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);
+			delay_us1(1);
+			dout = HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_1);
+			data = data << 1;
+			if (dout) {
+				data++;
+			}
+			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);
+			delay_us1(1);
+		}
+		for( int i = 0; i < GAIN1; i ++ ) {
+			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);
+			delay_us1(1);
+			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);
+			delay_us1(1);
+		}
+		if( data & 0x800000 )
+			filler = 0xFF000000;
+		else
+			filler = 0x00000000;
+
+		ret_value = filler + data;
+		return ret_value;
+	}
+uint8_t hx711_is_ready1(void) {
+	return HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_1) == GPIO_PIN_RESET;
+}
+int32_t GetCurrentWeight()
 {
-	uint16_t weight = rand() % (500);
-	weight += 1000;
-	LCD5110_printf(&lcd1, BLACK, "Weight: %d \r\n", weight);
-	HAL_GPIO_TogglePin(GPIOD, GPIO_PIN_12);
+	int32_t hx711_value = hx711_get_value();
+
+	int32_t hx711_value1 = hx711_get_value1();
+
+	int32_t weight = (hx711_value + hx711_value1) * supportCoefficient;
+
 	return weight;
-//	hx711_is_ready();
-//	int32_t hx711_value;
-//	if(hx711_is_ready()) {
-//	      LCD5110_clear_scr(&lcd1);
-//	      hx711_value = hx711_get_value();
-////	      LCD5110_print("Weight: \n", BLACK, &lcd1);
-//	      char buffer[100];
-//	      sprintf(buffer, "%lu \n", ((hx711_value)/1000)+263);
-////	      LCD5110_print(buffer, BLACK, &lcd1);
-//	      HAL_Delay(500);
-//	      LCD5110_clear_scr(&lcd1);
-//	}else {
-//	      LCD5110_clear_scr(&lcd1);
-////	      LCD5110_print("Error! \n", BLACK, &lcd1);
-//	      HAL_Delay(500);
-//	      LCD5110_clear_scr(&lcd1);
-//	}
-//	return ((hx711_value)/1000)+263;
+}
+
+void WEIGHT_init()
+{
+    hx711_init();
+    hx711_init1();
 }
 
 uint16_t GetCurrentTemperature()
 {
 	//TODO: temperature measuring code here
-	int temp_flag = 0;
-	uint8_t buffer[2];
-	HAL_I2C_Mem_Read(&hi2c1, MCP9808_ADDRESS << 1, 0x05, 1, buffer, 2, HAL_MAX_DELAY);
-
-	int16_t temperature = ((buffer[0] << 8) | buffer[1]) & 0xFFF;
-	float temp_celsius = (float)temperature / 16.0;
-		  // Handle temperature data as needed
-	sprintf(buffer, "Temperature: %.2f degrees \r\n", temp_celsius);
+//	int temp_flag = 0;
+//	uint8_t buffer[2];
+//	HAL_I2C_Mem_Read(&hi2c1, MCP9808_ADDRESS << 1, 0x05, 1, buffer, 2, HAL_MAX_DELAY);
+//
+//	int16_t temperature = ((buffer[0] << 8) | buffer[1]) & 0xFFF;
+//	float temp_celsius = (float)temperature / 16.0;
+//	sprintf(buffer, "Temperature: %.2f degrees \r\n", temp_celsius);
 		//printf( "Temperature: %.2f degrees Celsius \r\n", temp_celsius);
-	LCD5110_print(buffer, BLACK, &lcd1);
+
 	HAL_GPIO_TogglePin(GPIOD, GPIO_PIN_13);
-	return temp_celsius;
+	return 20;
 }
 
 bool SetCurrentTemperature(uint8_t newTemperature)
@@ -280,13 +306,12 @@ void WeightCheckingRoutine()
 
 void SwitchTemperatureRelay(uint8_t relayValue)
 {
-	//TODO: switch relay
 	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_2, relayValue);
 }
 
 bool PetLeft()
 {
-	return (GetCurrentWeight() > petInsideWeightThreshold);
+	return (GetCurrentWeight() < petInsideWeightThreshold);
 }
 
 void TemperatureCheckingRoutine()
@@ -332,39 +357,33 @@ void (*stateFunction)(void) = WeightCheckingRoutine;
 
 void TransitState(state_t newState)
 {
-	LCD5110_clear_scr(&lcd1);
 	switch(newState)
 	{
 		case CheckingWeight:
 			SwitchTemperatureRelay(0);
 			budkaState = CheckingWeight;
 			stateFunction = WeightCheckingRoutine;
-			LCD5110_print("Transit to weight  \r\n", BLACK, &lcd1);
 			SwitchStateLEDs(GPIO_PIN_12);
 			break;
 		case CheckingTemperature:
 			SwitchTemperatureRelay(1);
 			budkaState = CheckingTemperature;
 			stateFunction = TemperatureCheckingRoutine;
-			LCD5110_print("Transit to temperature  \r\n", BLACK, &lcd1);
 			SwitchStateLEDs(GPIO_PIN_13);
 			break;
 		case WarmingUp:
 			secondsElapsed = 0;
 			budkaState = WarmingUp;
 			stateFunction = WarmingUpRoutine;
-			LCD5110_print("Transit to warming  \r\n", BLACK, &lcd1);
 			SwitchStateLEDs(GPIO_PIN_14);
 			break;
 		case CoolingDown:
 			secondsElapsed = 0;
 			budkaState = CoolingDown;
 			stateFunction = CoolingDownRoutine;
-			LCD5110_print("Transit to cooling  \r\n", BLACK, &lcd1);
 			SwitchStateLEDs(GPIO_PIN_15);
 			break;
 	}
-	LCD5110_refresh(&lcd1);
 }
 
 
@@ -407,20 +426,21 @@ int main(void)
   MX_TIM10_Init();
   MX_SPI1_Init();
   MX_USART6_UART_Init();
+  MX_TIM11_Init();
   /* USER CODE BEGIN 2 */
-  	LCD_init();
+  	//LCD_init();
 	HAL_TIM_Base_Start_IT(&htim2);
 	HAL_TIM_Base_Start_IT(&htim1);
     HAL_TIM_Base_Start(&htim10);
+    HAL_TIM_Base_Start(&htim11);
     HAL_UART_Receive_IT(&huart6, receive_buff, maxMessageSize);
-    //HAL_UART_Receive_DMA(&huart6, receive_buff, maxMessageSize);
-    srand(184);
-	LCD5110_refresh(&lcd1);
+
+    WEIGHT_init();
+	//LCD5110_refresh(&lcd1);
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  WEIGHT_init();
   while (1)
   {
 	  stateFunction();
@@ -559,16 +579,19 @@ bool ProcessUserQuery()
 		setTempMessage[uResponseLineSize - 4] = setTemperature/10 + '0';
 		HAL_UART_Transmit(&huart6, setTempMessage, uResponseLineSize, 10);
 
-//		uint16_t curTemp = GetCurrentTemperature();
-//		curTempMessage[sResponseLineSize - 3] = abs(curTemp)%10 + '0';
-//		curTempMessage[sResponseLineSize - 4] = abs(curTemp)/10 + '0';
-//		curTempMessage[sResponseLineSize - 5] = curTemp > 0? '+' : '-';
-//		HAL_UART_Transmit_DMA(&huart6, curTempMessage, sResponseLineSize);
+		uint16_t curTemp = GetCurrentTemperature();
+		curTempMessage[sResponseLineSize - 3] = abs(curTemp)%10 + '0';
+		curTempMessage[sResponseLineSize - 4] = abs(curTemp)/10 + '0';
+		curTempMessage[sResponseLineSize - 5] = curTemp > 0? '+' : '-';
+		HAL_UART_Transmit(&huart6, curTempMessage, sResponseLineSize, 10);
 
-//		uint16_t curLoad = GetCurrentWeight();
-//		loadMessage[sResponseLineSize - 3] = abs(curLoad)%10 + '0';
-//		loadMessage[sResponseLineSize - 4] = abs(curLoad)/10 + '0';
-//		HAL_UART_Transmit_DMA(&huart6, loadMessage, uResponseLineSize);
+		int32_t curLoad = GetCurrentWeight();
+		curLoad /= 1000;
+		curLoad *= weightConversionCoefficient;
+		loadMessage[uResponseLineSize - 3] = abs(curLoad)%10 + '0';
+		loadMessage[uResponseLineSize - 4] = (abs(curLoad) / 10)%10 + '0';
+		loadMessage[uResponseLineSize - 5] = abs(curLoad)/100 + '0';
+		HAL_UART_Transmit(&huart6, loadMessage, uResponseLineSize, 10);
 
 		weightBoundMessage[uResponseLineSize - 3] = petInsideWeightThreshold%10 + '0';
 		weightBoundMessage[uResponseLineSize - 4] = petInsideWeightThreshold/10 + '0';
