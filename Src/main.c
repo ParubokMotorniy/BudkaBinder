@@ -117,8 +117,7 @@ volatile double weightExp = 0.26;
 volatile int32_t hx711_value = 14;
 volatile int32_t hx711_value1 = 88;
 
-const int16_t roughPlankWeight = 0;
-const int16_t weightConversionCoefficient = 1;
+const int32_t roughPlankWeight = 600000;
 const int16_t supportCoefficient = 2;
 
 void TransitState(state_t newState);
@@ -251,9 +250,6 @@ int32_t GetCurrentWeight()
 	weight /= 1000;
 
 	weight = ceil(pow((double) weight, weightExp));
-	//return 15;
-	//currentWeight = weight;
-	//currentWeight += 15;
 	return weight;
 }
 
@@ -314,7 +310,7 @@ bool SetWeightThreshold(uint8_t newThreshold)
 
 void WeightCheckingRoutine()
 {
-	if(currentWeight < petInsideWeightThreshold){return;}
+	if(GetCurrentWeight() < petInsideWeightThreshold){return;}
 
 	TransitState(CheckingTemperature);
 }
@@ -326,7 +322,7 @@ void SwitchTemperatureRelay(uint8_t relayValue)
 
 bool PetLeft()
 {
-	return (currentWeight < petInsideWeightThreshold);
+	return (GetCurrentWeight() < petInsideWeightThreshold);
 }
 
 void TemperatureCheckingRoutine()
@@ -533,12 +529,6 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-//	  __disable_irq();
-//	  currentTemperature = GetCurrentTemperature();
-//	  //GetCurrentWeight();
-//	  currentWeight = GetCurrentWeight();
-//	  __enable_irq();
-
 	  if(uartFlag)
 	  {
 		  __disable_irq();
@@ -560,6 +550,7 @@ int main(void)
 		    HAL_UART_Receive_IT(&huart6, receive_buff, maxMessageSize);
 	  }
 	  stateFunction();
+	  HAL_Delay(100);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
