@@ -31,6 +31,7 @@
 #include "lcd5110.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <math.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -110,6 +111,8 @@ uint16_t leds[4] = {GPIO_PIN_12, GPIO_PIN_13, GPIO_PIN_14, GPIO_PIN_15};
 
 volatile int32_t currentWeight = 0;
 volatile int16_t currentTemperature = 0;
+volatile bool uartFlag = false;
+volatile double weightExp = 0.26;
 
 volatile int32_t hx711_value = 14;
 volatile int32_t hx711_value1 = 88;
@@ -237,14 +240,17 @@ uint8_t hx711_is_ready1(void) {
 }
 int32_t GetCurrentWeight()
 {
-	hx711_value += 15;// hx711_get_value();
+	hx711_value = hx711_get_value();
 
-	hx711_value1 += 25; //hx711_get_value1();
+	hx711_value1 = hx711_get_value1();
 
 	int32_t weight = (hx711_value + hx711_value1 - roughPlankWeight) * supportCoefficient;
-	weight /= 1000;
-	weight *= weightConversionCoefficient;
 
+	weight = 0 > weight ? 0 : weight;
+
+	weight /= 1000;
+
+	weight = ceil(pow((double) weight, weightExp));
 	//return 15;
 	//currentWeight = weight;
 	//currentWeight += 15;
@@ -391,7 +397,86 @@ void TransitState(state_t newState)
 			break;
 	}
 }
+int8_t InterpretNumberFromBuffer()
+{
+	int8_t multiplier = 1;
+	int8_t result = 0;
 
+	if(receive_buff[8] == '-')
+	{
+		multiplier = -1;
+	} else if(receive_buff[8] != '+')
+	{
+		return -127;
+	}
+
+	if(receive_buff[9] > '9' || receive_buff[10] > '9' || receive_buff[9] < '0' || receive_buff[10] < '0' ){return -127;}
+
+	result += (receive_buff[9]-'0') * 10;
+	result += receive_buff[10] - '0';
+	result *= multiplier;
+
+	return result;
+}
+
+bool ProcessUserQuery()
+{
+	if(receive_buff[0] == 'G' && receive_buff[1] == 'E' && receive_buff[2] == 'T')
+	{
+		lowerBoundMessage[sResponseLineSize - 3] = abs(temperatureLowBound)%10 + '0';
+		lowerBoundMessage[sResponseLineSize - 4] = abs(temperatureLowBound)/10 + '0';
+		lowerBoundMessage[sResponseLineSize - 5] = temperatureLowBound > 0? '+' : '-';
+		HAL_UART_Transmit(&huart6, lowerBoundMessage, sResponseLineSize, 10);
+
+		upperBoundMessage[uResponseLineSize - 3] = temperatureUpperBound%10 + '0';
+		upperBoundMessage[uResponseLineSize - 4] = temperatureUpperBound/10 + '0';
+		HAL_UART_Transmit(&huart6, upperBoundMessage, uResponseLineSize, 10);
+
+		setTempMessage[uResponseLineSize - 3] = setTemperature%10 + '0';
+		setTempMessage[uResponseLineSize - 4] = setTemperature/10 + '0';
+		HAL_UART_Transmit(&huart6, setTempMessage, uResponseLineSize, 10);
+
+		curTempMessage[sResponseLineSize - 3] = abs(currentTemperature)%10 + '0';
+		curTempMessage[sResponseLineSize - 4] = abs(currentTemperature)/10 + '0';
+		curTempMessage[sResponseLineSize - 5] = currentTemperature > 0? '+' : '-';
+		HAL_UART_Transmit(&huart6, curTempMessage, sResponseLineSize, 10);
+
+		loadMessage[uResponseLineSize - 3] = abs(currentWeight)%10 + '0';
+		loadMessage[uResponseLineSize - 4] = abs(currentWeight) / 10 + '0';
+		HAL_UART_Transmit(&huart6, loadMessage, uResponseLineSize, 10);
+
+		weightBoundMessage[uResponseLineSize - 3] = petInsideWeightThreshold%10 + '0';
+		weightBoundMessage[uResponseLineSize - 4] = petInsideWeightThreshold/10 + '0';
+		HAL_UART_Transmit(&huart6, weightBoundMessage, uResponseLineSize, 10);
+
+		presenceMessage[uResponseLineSize - 3] = !PetLeft() + '0';
+		HAL_UART_Transmit(&huart6, presenceMessage, uResponseLineSize, 10);
+
+		return true;
+	} else if(receive_buff[0] == 'S' && receive_buff[1] == 'E' && receive_buff[2] == 'T' && receive_buff[3] == '+' && receive_buff[7] == '=')
+	{
+		int8_t valueToSet =  InterpretNumberFromBuffer();
+		if(valueToSet == -127)
+		{
+			return false;
+		}
+
+		if(receive_buff[4] == 'L' && receive_buff[5] == 'W' && receive_buff[6] == 'R')
+		{
+			return SetTemperatureLowerBound(valueToSet);
+		} else if(receive_buff[4] == 'U' && receive_buff[5] == 'P' && receive_buff[6] == 'R')
+		{
+			return SetTemperatureUpperBound(valueToSet);
+		}else if(receive_buff[4] == 'W' && receive_buff[5] == 'G' && receive_buff[6] == 'T')
+		{
+			return SetWeightThreshold(valueToSet);
+		} else if(receive_buff[4] == 'T' && receive_buff[5] == 'M' && receive_buff[6] == 'P')
+		{
+			return SetCurrentTemperature(valueToSet);
+		}
+	}
+	return false;
+}
 
 /* USER CODE END 0 */
 
@@ -448,11 +533,32 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	  __disable_irq();
-	  currentTemperature = GetCurrentTemperature();
-	  //GetCurrentWeight();
-	  currentWeight = GetCurrentWeight();
-	  __enable_irq();
+//	  __disable_irq();
+//	  currentTemperature = GetCurrentTemperature();
+//	  //GetCurrentWeight();
+//	  currentWeight = GetCurrentWeight();
+//	  __enable_irq();
+
+	  if(uartFlag)
+	  {
+		  __disable_irq();
+		  currentTemperature = GetCurrentTemperature();
+		  currentWeight = GetCurrentWeight();
+
+			if(ProcessUserQuery())
+			{
+				HAL_UART_Transmit_DMA(&huart6, successMessage, successMessageSize);
+			} else
+			{
+				HAL_UART_Transmit_DMA(&huart6, errorMessage, errorMessageSize);
+			}
+
+			uartFlag = false;
+			__enable_irq();
+
+			MX_USART6_UART_Init();
+		    HAL_UART_Receive_IT(&huart6, receive_buff, maxMessageSize);
+	  }
 	  stateFunction();
     /* USER CODE END WHILE */
 
@@ -550,98 +656,12 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 /**
   * @brief  Returns -127 if interpretation results in failure
   */
-int8_t InterpretNumberFromBuffer()
-{
-	int8_t multiplier = 1;
-	int8_t result = 0;
 
-	if(receive_buff[8] == '-')
-	{
-		multiplier = -1;
-	} else if(receive_buff[8] != '+')
-	{
-		return -127;
-	}
-
-	if(receive_buff[9] > '9' || receive_buff[10] > '9' || receive_buff[9] < '0' || receive_buff[10] < '0' ){return -127;}
-
-	result += (receive_buff[9]-'0') * 10;
-	result += receive_buff[10] - '0';
-	result *= multiplier;
-
-	return result;
-}
-
-bool ProcessUserQuery()
-{
-	if(receive_buff[0] == 'G' && receive_buff[1] == 'E' && receive_buff[2] == 'T')
-	{
-		lowerBoundMessage[sResponseLineSize - 3] = abs(temperatureLowBound)%10 + '0';
-		lowerBoundMessage[sResponseLineSize - 4] = abs(temperatureLowBound)/10 + '0';
-		lowerBoundMessage[sResponseLineSize - 5] = temperatureLowBound > 0? '+' : '-';
-		HAL_UART_Transmit(&huart6, lowerBoundMessage, sResponseLineSize, 10);
-
-		upperBoundMessage[uResponseLineSize - 3] = temperatureUpperBound%10 + '0';
-		upperBoundMessage[uResponseLineSize - 4] = temperatureUpperBound/10 + '0';
-		HAL_UART_Transmit(&huart6, upperBoundMessage, uResponseLineSize, 10);
-
-		setTempMessage[uResponseLineSize - 3] = setTemperature%10 + '0';
-		setTempMessage[uResponseLineSize - 4] = setTemperature/10 + '0';
-		HAL_UART_Transmit(&huart6, setTempMessage, uResponseLineSize, 10);
-
-		curTempMessage[sResponseLineSize - 3] = abs(currentTemperature)%10 + '0';
-		curTempMessage[sResponseLineSize - 4] = abs(currentTemperature)/10 + '0';
-		curTempMessage[sResponseLineSize - 5] = currentTemperature > 0? '+' : '-';
-		HAL_UART_Transmit(&huart6, curTempMessage, sResponseLineSize, 10);
-
-		loadMessage[uResponseLineSize - 3] = abs(currentWeight)%10 + '0';
-		loadMessage[uResponseLineSize - 4] = (abs(currentWeight) / 10)%10 + '0';
-		loadMessage[uResponseLineSize - 5] = abs(currentWeight)/100 + '0';
-		HAL_UART_Transmit(&huart6, loadMessage, uResponseLineSize, 10);
-
-		weightBoundMessage[uResponseLineSize - 3] = petInsideWeightThreshold%10 + '0';
-		weightBoundMessage[uResponseLineSize - 4] = petInsideWeightThreshold/10 + '0';
-		HAL_UART_Transmit(&huart6, weightBoundMessage, uResponseLineSize, 10);
-
-		presenceMessage[uResponseLineSize - 3] = !PetLeft() + '0';
-		HAL_UART_Transmit(&huart6, presenceMessage, uResponseLineSize, 10);
-
-		return true;
-	} else if(receive_buff[0] == 'S' && receive_buff[1] == 'E' && receive_buff[2] == 'T' && receive_buff[3] == '+' && receive_buff[7] == '=')
-	{
-		int8_t valueToSet =  InterpretNumberFromBuffer();
-		if(valueToSet == -127)
-		{
-			return false;
-		}
-
-		if(receive_buff[4] == 'L' && receive_buff[5] == 'W' && receive_buff[6] == 'R')
-		{
-			return SetTemperatureLowerBound(valueToSet);
-		} else if(receive_buff[4] == 'U' && receive_buff[5] == 'P' && receive_buff[6] == 'R')
-		{
-			return SetTemperatureUpperBound(valueToSet);
-		}else if(receive_buff[4] == 'W' && receive_buff[5] == 'G' && receive_buff[6] == 'T')
-		{
-			return SetWeightThreshold(valueToSet);
-		} else if(receive_buff[4] == 'T' && receive_buff[5] == 'M' && receive_buff[6] == 'P')
-		{
-			return SetCurrentTemperature(valueToSet);
-		}
-	}
-	return false;
-}
 
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
+	uartFlag = true;
 
-	if(ProcessUserQuery())
-	{
-		HAL_UART_Transmit_DMA(&huart6, successMessage, successMessageSize);
-	} else
-	{
-		HAL_UART_Transmit_DMA(&huart6, errorMessage, errorMessageSize);
-	}
   HAL_UART_Receive_IT(&huart6, receive_buff, maxMessageSize);
   //HAL_UART_Receive_IT(&huart1, receive_buff, 1);
 }
