@@ -18,7 +18,6 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-#include "dma.h"
 #include "i2c.h"
 #include "spi.h"
 #include "tim.h"
@@ -93,10 +92,6 @@ volatile uint16_t temperatureCheckInterval = 0; //seconds
 volatile uint16_t maxVoltageValue = 256; //0 to 256
 volatile uint16_t maxRugTemperature = 40; //celsius
 
-float roughPlankWeight = 630;
-float weightConversionCoefficient = 1;
-float supportCoefficient = 2;
-
 uint8_t stateMessage[errorMessageSize] = {85, 80, 71, 79, 73, 78, 10, 13};
 uint8_t successMessage[successMessageSize] = "SUCCESS!\r\n";
 uint8_t errorMessage[errorMessageSize] = "ERROR!\r\n";
@@ -112,6 +107,16 @@ uint8_t curTempMessage[sResponseLineSize] = {67, 85, 82, 61, 0, 0, 0, 10, 13};
 
 uint8_t ledArrLength = 4;
 uint16_t leds[4] = {GPIO_PIN_12, GPIO_PIN_13, GPIO_PIN_14, GPIO_PIN_15};
+
+volatile int32_t currentWeight = 0;
+volatile int16_t currentTemperature = 0;
+
+volatile int32_t hx711_value = 14;
+volatile int32_t hx711_value1 = 88;
+
+const int16_t roughPlankWeight = 0;
+const int16_t weightConversionCoefficient = 1;
+const int16_t supportCoefficient = 2;
 
 void TransitState(state_t newState);
 
@@ -232,12 +237,17 @@ uint8_t hx711_is_ready1(void) {
 }
 int32_t GetCurrentWeight()
 {
-	int32_t hx711_value = hx711_get_value();
+	hx711_value += 15;// hx711_get_value();
 
-	int32_t hx711_value1 = hx711_get_value1();
+	hx711_value1 += 25; //hx711_get_value1();
 
-	int32_t weight = (hx711_value + hx711_value1) * supportCoefficient;
+	int32_t weight = (hx711_value + hx711_value1 - roughPlankWeight) * supportCoefficient;
+	weight /= 1000;
+	weight *= weightConversionCoefficient;
 
+	//return 15;
+	//currentWeight = weight;
+	//currentWeight += 15;
 	return weight;
 }
 
@@ -247,7 +257,7 @@ void WEIGHT_init()
     hx711_init1();
 }
 
-uint16_t GetCurrentTemperature()
+int16_t GetCurrentTemperature()
 {
 	//TODO: temperature measuring code here
 //	int temp_flag = 0;
@@ -259,7 +269,6 @@ uint16_t GetCurrentTemperature()
 //	sprintf(buffer, "Temperature: %.2f degrees \r\n", temp_celsius);
 		//printf( "Temperature: %.2f degrees Celsius \r\n", temp_celsius);
 
-	HAL_GPIO_TogglePin(GPIOD, GPIO_PIN_13);
 	return 20;
 }
 
@@ -299,7 +308,7 @@ bool SetWeightThreshold(uint8_t newThreshold)
 
 void WeightCheckingRoutine()
 {
-	if(GetCurrentWeight() < petInsideWeightThreshold){return;}
+	if(currentWeight < petInsideWeightThreshold){return;}
 
 	TransitState(CheckingTemperature);
 }
@@ -311,7 +320,7 @@ void SwitchTemperatureRelay(uint8_t relayValue)
 
 bool PetLeft()
 {
-	return (GetCurrentWeight() < petInsideWeightThreshold);
+	return (currentWeight < petInsideWeightThreshold);
 }
 
 void TemperatureCheckingRoutine()
@@ -322,11 +331,10 @@ void TemperatureCheckingRoutine()
 		return;
 	}
 
-	uint16_t curTemp = GetCurrentTemperature();
-	if(curTemp < temperatureLowBound)
+	if(currentTemperature < temperatureLowBound)
 	{
 		TransitState(WarmingUp);
-	} else if(curTemp > temperatureUpperBound)
+	} else if(currentTemperature > temperatureUpperBound)
 	{
 		TransitState(CoolingDown);
 	}
@@ -334,7 +342,6 @@ void TemperatureCheckingRoutine()
 
 void WarmingUpRoutine()
 {
-	HAL_GPIO_TogglePin(GPIOD, GPIO_PIN_14);
 	if(PetLeft())
 	{
 		TransitState(CheckingWeight);
@@ -343,7 +350,6 @@ void WarmingUpRoutine()
 
 void CoolingDownRoutine()
 {
-	HAL_GPIO_TogglePin(GPIOD, GPIO_PIN_15);
 	if(PetLeft())
 	{
 		TransitState(CheckingWeight);
@@ -419,7 +425,6 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
-  MX_DMA_Init();
   MX_TIM2_Init();
   MX_TIM1_Init();
   MX_I2C1_Init();
@@ -443,6 +448,11 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+	  __disable_irq();
+	  currentTemperature = GetCurrentTemperature();
+	  //GetCurrentWeight();
+	  currentWeight = GetCurrentWeight();
+	  __enable_irq();
 	  stateFunction();
     /* USER CODE END WHILE */
 
@@ -501,13 +511,13 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
 	if(htim->Instance == TIM2)
 	{
-		 HAL_UART_Transmit_DMA(&huart6, stateMessage, errorMessageSize);
+		 HAL_UART_Transmit(&huart6, stateMessage, errorMessageSize, 10);
 		secondsElapsed++;
 		if(secondsElapsed < temperatureCheckInterval){return;}
 
 		if(budkaState == WarmingUp)
 		{
-			if(GetCurrentTemperature() < temperatureLowBound)
+			if(currentTemperature < temperatureLowBound)
 			{
 				SetCurrentTemperature(setTemperature + temperatureStep);
 			}else
@@ -516,7 +526,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 			}
 		}else if(budkaState == CoolingDown)
 		{
-			if(GetCurrentTemperature() > temperatureUpperBound)
+			if(currentTemperature > temperatureUpperBound)
 			{
 				SetCurrentTemperature(setTemperature - temperatureStep);
 			}else
@@ -579,18 +589,14 @@ bool ProcessUserQuery()
 		setTempMessage[uResponseLineSize - 4] = setTemperature/10 + '0';
 		HAL_UART_Transmit(&huart6, setTempMessage, uResponseLineSize, 10);
 
-		uint16_t curTemp = GetCurrentTemperature();
-		curTempMessage[sResponseLineSize - 3] = abs(curTemp)%10 + '0';
-		curTempMessage[sResponseLineSize - 4] = abs(curTemp)/10 + '0';
-		curTempMessage[sResponseLineSize - 5] = curTemp > 0? '+' : '-';
+		curTempMessage[sResponseLineSize - 3] = abs(currentTemperature)%10 + '0';
+		curTempMessage[sResponseLineSize - 4] = abs(currentTemperature)/10 + '0';
+		curTempMessage[sResponseLineSize - 5] = currentTemperature > 0? '+' : '-';
 		HAL_UART_Transmit(&huart6, curTempMessage, sResponseLineSize, 10);
 
-		int32_t curLoad = GetCurrentWeight();
-		curLoad /= 1000;
-		curLoad *= weightConversionCoefficient;
-		loadMessage[uResponseLineSize - 3] = abs(curLoad)%10 + '0';
-		loadMessage[uResponseLineSize - 4] = (abs(curLoad) / 10)%10 + '0';
-		loadMessage[uResponseLineSize - 5] = abs(curLoad)/100 + '0';
+		loadMessage[uResponseLineSize - 3] = abs(currentWeight)%10 + '0';
+		loadMessage[uResponseLineSize - 4] = (abs(currentWeight) / 10)%10 + '0';
+		loadMessage[uResponseLineSize - 5] = abs(currentWeight)/100 + '0';
 		HAL_UART_Transmit(&huart6, loadMessage, uResponseLineSize, 10);
 
 		weightBoundMessage[uResponseLineSize - 3] = petInsideWeightThreshold%10 + '0';
