@@ -82,11 +82,11 @@ const uint8_t absolutePetInsideWeightThresholdUpper = 40; //defined by character
 const int8_t absoluteTemperatureLowBound = -15; //can not be set lower than this
 const int8_t absoluteTemperatureUpperBound = 45; //can not be set lower than this
 
-volatile uint8_t petInsideWeightThreshold = 12; //kilograms
+volatile uint8_t petInsideWeightThreshold = 4; //kilograms
 volatile int8_t temperatureLowBound = 14; //celsius
 volatile int8_t temperatureUpperBound = 20; //celsius
 
-volatile int8_t setTemperature = 0; //celsius
+volatile int8_t setTemperature = 12; //celsius
 volatile uint16_t temperatureStep = 5;
 volatile uint16_t secondsElapsed = 0;
 volatile uint16_t temperatureCheckInterval = 0; //seconds
@@ -112,12 +112,13 @@ uint16_t leds[4] = {GPIO_PIN_12, GPIO_PIN_13, GPIO_PIN_14, GPIO_PIN_15};
 volatile int32_t currentWeight = 0;
 volatile int16_t currentTemperature = 0;
 volatile bool uartFlag = false;
-volatile double weightExp = 0.26;
+volatile double weightExp = 0.2;
+volatile uint8_t weightStabilizationIterations = 4;
 
 volatile int32_t hx711_value = 14;
 volatile int32_t hx711_value1 = 88;
 
-const int32_t roughPlankWeight = 600000;
+const int32_t roughPlankWeight = 513;
 const int16_t supportCoefficient = 2;
 
 void TransitState(state_t newState);
@@ -239,15 +240,16 @@ uint8_t hx711_is_ready1(void) {
 }
 int32_t GetCurrentWeight()
 {
+	int32_t weight = 0;
 	hx711_value = hx711_get_value();
 
 	hx711_value1 = hx711_get_value1();
 
-	int32_t weight = (hx711_value + hx711_value1 - roughPlankWeight) * supportCoefficient;
-
-	weight = 0 > weight ? 0 : weight;
+	weight = (hx711_value + hx711_value1);
 
 	weight /= 1000;
+
+	weight = roughPlankWeight >= weight ? 0 : weight;
 
 	weight = ceil(pow((double) weight, weightExp));
 	return weight;
@@ -261,17 +263,15 @@ void WEIGHT_init()
 
 int16_t GetCurrentTemperature()
 {
-	//TODO: temperature measuring code here
-//	int temp_flag = 0;
-//	uint8_t buffer[2];
-//	HAL_I2C_Mem_Read(&hi2c1, MCP9808_ADDRESS << 1, 0x05, 1, buffer, 2, HAL_MAX_DELAY);
-//
-//	int16_t temperature = ((buffer[0] << 8) | buffer[1]) & 0xFFF;
-//	float temp_celsius = (float)temperature / 16.0;
-//	sprintf(buffer, "Temperature: %.2f degrees \r\n", temp_celsius);
-		//printf( "Temperature: %.2f degrees Celsius \r\n", temp_celsius);
+	uint8_t buffer[2];
+	HAL_I2C_Mem_Read(&hi2c1, MCP9808_ADDRESS << 1, 0x05, 1, buffer, 2, HAL_MAX_DELAY);
 
-	return 20;
+	int16_t temperature = ((buffer[0] << 8) | buffer[1]) & 0xFFF;
+	float temp_celsius = (float)temperature / 16.0;
+
+	int16_t convTemp = (int16_t) temp_celsius;
+
+	return convTemp;
 }
 
 bool SetCurrentTemperature(uint8_t newTemperature)
@@ -522,6 +522,9 @@ int main(void)
     HAL_UART_Receive_IT(&huart6, receive_buff, maxMessageSize);
 
     WEIGHT_init();
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_2, 1);
+    SetCurrentTemperature(setTemperature);
+    TransitState(CheckingWeight);
 	//LCD5110_refresh(&lcd1);
   /* USER CODE END 2 */
 
@@ -537,10 +540,10 @@ int main(void)
 
 			if(ProcessUserQuery())
 			{
-				HAL_UART_Transmit_DMA(&huart6, successMessage, successMessageSize);
+				HAL_UART_Transmit(&huart6, successMessage, successMessageSize, 10);
 			} else
 			{
-				HAL_UART_Transmit_DMA(&huart6, errorMessage, errorMessageSize);
+				HAL_UART_Transmit(&huart6, errorMessage, errorMessageSize, 10);
 			}
 
 			uartFlag = false;
@@ -608,7 +611,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
 	if(htim->Instance == TIM2)
 	{
-		 HAL_UART_Transmit(&huart6, stateMessage, errorMessageSize, 10);
+		 //HAL_UART_Transmit(&huart6, stateMessage, errorMessageSize, 10);
 		secondsElapsed++;
 		if(secondsElapsed < temperatureCheckInterval){return;}
 
