@@ -82,11 +82,11 @@ const uint8_t absolutePetInsideWeightThresholdUpper = 40; //defined by character
 const int8_t absoluteTemperatureLowBound = -15; //can not be set lower than this
 const int8_t absoluteTemperatureUpperBound = 45; //can not be set lower than this
 
-volatile uint8_t petInsideWeightThreshold = 4; //kilograms
-volatile int8_t temperatureLowBound = 14; //celsius
-volatile int8_t temperatureUpperBound = 20; //celsius
+volatile uint8_t petInsideWeightThreshold = 3; //kilograms
+volatile int8_t temperatureLowBound = 25; //celsius
+volatile int8_t temperatureUpperBound = 35; //celsius
 
-volatile int8_t setTemperature = 12; //celsius
+volatile int8_t setTemperature = 30; //celsius
 volatile uint16_t temperatureStep = 5;
 volatile uint16_t secondsElapsed = 0;
 volatile uint16_t temperatureCheckInterval = 0; //seconds
@@ -368,13 +368,13 @@ void TransitState(state_t newState)
 	switch(newState)
 	{
 		case CheckingWeight:
-			SwitchTemperatureRelay(0);
+			SwitchTemperatureRelay(1);
 			budkaState = CheckingWeight;
 			stateFunction = WeightCheckingRoutine;
 			SwitchStateLEDs(GPIO_PIN_12);
 			break;
 		case CheckingTemperature:
-			SwitchTemperatureRelay(1);
+			SwitchTemperatureRelay(0);
 			budkaState = CheckingTemperature;
 			stateFunction = TemperatureCheckingRoutine;
 			SwitchStateLEDs(GPIO_PIN_13);
@@ -445,7 +445,7 @@ bool ProcessUserQuery()
 		weightBoundMessage[uResponseLineSize - 4] = petInsideWeightThreshold/10 + '0';
 		HAL_UART_Transmit(&huart6, weightBoundMessage, uResponseLineSize, 10);
 
-		presenceMessage[uResponseLineSize - 3] = !PetLeft() + '0';
+		presenceMessage[uResponseLineSize - 3] = (currentWeight > petInsideWeightThreshold) + '0';
 		HAL_UART_Transmit(&huart6, presenceMessage, uResponseLineSize, 10);
 
 		return true;
@@ -511,8 +511,9 @@ int main(void)
   MX_I2C1_Init();
   MX_TIM10_Init();
   MX_SPI1_Init();
-  MX_USART6_UART_Init();
   MX_TIM11_Init();
+  MX_USART6_UART_Init();
+
   /* USER CODE BEGIN 2 */
   	//LCD_init();
 	HAL_TIM_Base_Start_IT(&htim2);
@@ -611,7 +612,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
 	if(htim->Instance == TIM2)
 	{
-		 //HAL_UART_Transmit(&huart6, stateMessage, errorMessageSize, 10);
+		 HAL_UART_Transmit(&huart6, stateMessage, errorMessageSize, 10);
 		secondsElapsed++;
 		if(secondsElapsed < temperatureCheckInterval){return;}
 
